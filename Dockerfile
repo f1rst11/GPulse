@@ -1,30 +1,25 @@
-# Указываем образ Python 3.13 с поддержкой Rust
+# Используем официальный образ Python
 FROM python:3.13-slim
 
-# Устанавливаем зависимости для сборки Rust-библиотек
+# Устанавливаем rust и другие зависимости
 RUN apt-get update && apt-get install -y \
-    build-essential \
+    gcc \
     curl \
-    libssl-dev \
     libffi-dev \
-    git \
-    && curl https://sh.rustup.rs -sSf | sh -s -- -y
+    build-essential \
+    rustc \
+    && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем переменные окружения для Rust
-ENV PATH="/root/.cargo/bin:$PATH"
+# Устанавливаем pip и обновляем
+RUN python -m pip install --upgrade pip
 
-# Создаём рабочую директорию
+# Копируем файлы проекта
 WORKDIR /app
+COPY . /app
 
-# Копируем проект
-COPY . .
+# Устанавливаем зависимости, принудительно отключая сборку из исходников
+ENV PIP_NO_BUILD_ISOLATION=1
+RUN pip install --prefer-binary --no-cache-dir -r requirements.txt
 
-# Устанавливаем зависимости
-RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
-
-# Устанавливаем переменные окружения (можно заменить или убрать в Render)
-ENV PYTHONUNBUFFERED=1
-
-# Команда запуска
-CMD ["python", "bot.py"]
+# Запуск приложения
+CMD ["python", "main.py"]
