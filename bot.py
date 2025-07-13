@@ -3,13 +3,13 @@ import logging
 import os
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.filters import CommandStart
-from aiogram.utils.keyboard import ReplyKeyboardBuilder
-from dotenv import load_dotenv
+from aiogram import Router
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.payments import GetStarGifts
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -18,37 +18,34 @@ API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 SESSION_STRING = os.getenv("SESSION_STRING")
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
-
-client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
-
 logging.basicConfig(level=logging.INFO)
 
-# --- Keyboards ---
-language_keyboard = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="Русский 🇷🇺"), KeyboardButton(text="English 🇬🇧")]],
-    resize_keyboard=True
+bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+dp = Dispatcher(storage=MemoryStorage())
+router = Router()
+client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+
+sent_gift_ids = set()
+user_languages = {}
+user_intervals = {}
+
+language_keyboard = ReplyKeyboardMarkup(resize_keyboard=True).add(
+    KeyboardButton("Русский 🇷🇺"),
+    KeyboardButton("English 🇬🇧")
 )
 
-intervals_ru = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="10 секунд🕕")],
-        [KeyboardButton(text="5 минут🕕")],
-        [KeyboardButton(text="1 час🕕")],
-        [KeyboardButton(text="1 день🕕")]
-    ],
-    resize_keyboard=True
+intervals_ru = ReplyKeyboardMarkup(resize_keyboard=True).add(
+    KeyboardButton("10 секунд🕕"),
+    KeyboardButton("5 минут🕕"),
+    KeyboardButton("1 час🕕"),
+    KeyboardButton("1 день🕕")
 )
 
-intervals_en = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="10 seconds🕕")],
-        [KeyboardButton(text="5 minutes🕕")],
-        [KeyboardButton(text="1 hour🕕")],
-        [KeyboardButton(text="1 day🕕")]
-    ],
-    resize_keyboard=True
+intervals_en = ReplyKeyboardMarkup(resize_keyboard=True).add(
+    KeyboardButton("10 seconds🕕"),
+    KeyboardButton("5 minutes🕕"),
+    KeyboardButton("1 hour🕕"),
+    KeyboardButton("1 day🕕")
 )
 
 interval_values = {
@@ -62,17 +59,11 @@ interval_values = {
     "1 day🕕": 86400
 }
 
-# --- In-memory storage ---
-user_languages = {}
-user_intervals = {}
-sent_gift_ids = set()
-
-# --- Handlers ---
-@dp.message(CommandStart())
+@router.message(F.text == "/start")
 async def start_handler(message: types.Message):
     await message.answer("Выбери язык / Choose language:", reply_markup=language_keyboard)
 
-@dp.message(F.text.in_(["Русский 🇷🇺", "English 🇬🇧"]))
+@router.message(F.text.in_(["Русский 🇷🇺", "English 🇬🇧"]))
 async def language_handler(message: types.Message):
     user_id = message.from_user.id
     if message.text == "Русский 🇷🇺":
@@ -82,18 +73,18 @@ async def language_handler(message: types.Message):
         user_languages[user_id] = "en"
         await message.answer("Language set: English 🇬🇧\n\nChoose check interval 🕕", reply_markup=intervals_en)
 
-@dp.message(F.text.in_(interval_values.keys()))
+@router.message(F.text.in_(interval_values.keys()))
 async def interval_handler(message: types.Message):
     user_id = message.from_user.id
     interval = interval_values[message.text]
     user_intervals[user_id] = interval
 
     lang = user_languages.get(user_id, "en")
-    interval_text = message.text.split()[0]
-    response = f"✅ Проверка каждые {interval_text} ✅" if lang == "ru" else f"✅ Check every {interval_text} ✅"
-    await message.answer(response)
+    if lang == "ru":
+        await message.answer(f"✅ Проверка каждые {message.text.split()[0]} ✅")
+    else:
+        await message.answer(f"✅ Check every {message.text.split()[0]} ✅")
 
-# --- Background gift checker ---
 async def check_gifts():
     await client.start()
     while True:
@@ -104,13 +95,10 @@ async def check_gifts():
                     sent_gift_ids.add(gift.id)
                     for user_id in user_intervals:
                         lang = user_languages.get(user_id, "en")
-                        msg = (
-                            f"❗️НОВЫЙ ПОДАРОК ❗️\n{gift.title.text}\nЦена: {gift.star_count}⭐️\n"
-                            f"Всего: {gift.total_count}\nОсталось: {gift.remaining_count}"
-                            if lang == "ru" else
-                            f"❗️NEW GIFT ❗️\n{gift.title.text}\nPrice: {gift.star_count}⭐️\n"
-                            f"Total: {gift.total_count}\nLeft: {gift.remaining_count}"
-                        )
+                        msg = (f"❗️НОВЫЙ ПОДАРОК ❗️\n{gift.title.text}\nЦена: {gift.star_count}⭐\n"
+                               f"Всего: {gift.total_count}\nОсталось: {gift.remaining_count}") if lang == "ru" else (
+                               f"❗️NEW GIFT ❗️\n{gift.title.text}\nPrice: {gift.star_count}⭐\n"
+                               f"Total: {gift.total_count}\nLeft: {gift.remaining_count}")
                         if gift.unique:
                             msg += "\nУникальный ✅" if lang == "ru" else "\nUnique ✅"
                         await bot.send_message(user_id, msg)
@@ -118,8 +106,8 @@ async def check_gifts():
             logging.error(f"[ERROR] {e}")
         await asyncio.sleep(5)
 
-# --- Main ---
 async def main():
+    dp.include_router(router)
     asyncio.create_task(check_gifts())
     await dp.start_polling(bot)
 
